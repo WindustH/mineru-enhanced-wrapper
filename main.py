@@ -138,13 +138,23 @@ def _process_image(img_path: Path) -> str | None:
 
 
 def cmd_img2md(input_path: Path, output_path: Path, threads: int = 8) -> None:
-    """Replace image references in a markdown file with img2md descriptions."""
+    """Replace image references in a markdown file with img2md descriptions.
+
+    Resumes from a partially-converted output file if it exists, so an
+    interrupted run only re-processes images that weren't finished yet.
+    """
     if not input_path.is_file():
         log.error(f"file not found: {input_path}")
         sys.exit(1)
 
-    content = input_path.read_text(encoding="utf-8")
     md_dir = input_path.resolve().parent
+
+    # Resume from partial output if it exists, otherwise start from input
+    if output_path.is_file():
+        log.info(f"Resuming from partial output: {output_path.name}")
+        content = output_path.read_text(encoding="utf-8")
+    else:
+        content = input_path.read_text(encoding="utf-8")
 
     matches = [
         m for m in _IMG_PATTERN.finditer(content)
@@ -205,7 +215,10 @@ def cmd_img2md(input_path: Path, output_path: Path, threads: int = 8) -> None:
         content = content[:start] + replacement + content[end:]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(content, encoding="utf-8")
+    # Write to temp file then rename to avoid corrupting output on interrupt
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(output_path)
     log.success(f"written to {output_path}")
 
 
@@ -274,7 +287,10 @@ def main(argv: list[str] | None = None) -> None:
     # Phase 4: Generate text-only versions if requested
     if opts.text_only:
         log.header("Generating text-only versions")
-        md_files = sorted(output_dir.glob("*.md"))
+        md_files = sorted(
+            p for p in output_dir.glob("*.md")
+            if not p.stem.endswith("_text-only")
+        )
         for md_file in md_files:
             pure_text_path = md_file.with_stem(f"{md_file.stem}_text-only")
             log.info(f"{md_file.name} -> {pure_text_path.name}")

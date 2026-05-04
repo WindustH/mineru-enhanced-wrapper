@@ -1,9 +1,7 @@
-"""MinerU processor — runs MinerU on unprocessed chunks in a single batch, with caching."""
+"""MinerU processor — runs MinerU on unprocessed chunks one at a time, with caching."""
 
-import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 import log
@@ -34,10 +32,8 @@ def _validate_extra_args(args: list[str]) -> list[str]:
 
 
 def _has_complete_output(chunk_dir: Path) -> bool:
-    """Check if a MinerU output directory contains a completed result (.md file)."""
-    if not chunk_dir.is_dir():
-        return False
-    return any(chunk_dir.rglob("*.md"))
+    """Check if a MinerU output directory exists (completed)."""
+    return chunk_dir.is_dir()
 
 
 def process_chunks_dir(
@@ -45,7 +41,10 @@ def process_chunks_dir(
     cache_dir: Path,
     extra_args: list[str] | None = None,
 ) -> list[Path]:
-    """Run MinerU on unprocessed chunks in a single batch. Results cached in cache_dir.
+    """Run MinerU on unprocessed chunks one at a time. Results cached in cache_dir.
+
+    Each chunk is processed individually and cached immediately, so an
+    interrupted run only loses the current chunk.
 
     Returns list of all output subdirectories (cached + newly processed).
     """
@@ -73,44 +72,50 @@ def process_chunks_dir(
         log.info("All chunks already processed")
         return sorted(cached)
 
-    log.info(f"Processing {len(unprocessed)} chunk(s) in a single MinerU batch")
+    log.info(f"Processing {len(unprocessed)} chunk(s) one at a time")
+    extra = _validate_extra_args(extra_args or [])
 
-    # Create temp dir with symlinks to only unprocessed chunks
-    tmp_dir = Path(tempfile.mkdtemp(prefix="mineru-enhanced-batch-"))
-    try:
-        link_dir = tmp_dir / "chunks"
-        link_dir.mkdir()
-        for chunk in unprocessed:
-            (link_dir / chunk.name).symlink_to(chunk)
+    work_dir = cache_dir / "batch_work"
+    if work_dir.exists():
+        shutil.rmtree(work_dir, ignore_errors=True)
 
-        work_dir = tmp_dir / "mineru_output"
-        work_dir.mkdir()
+    for i, chunk in enumerate(unprocessed, 1):
+        log.info(f"[{i}/{len(unprocessed)}] {chunk.name}")
+
+        link_dir = work_dir / "chunks"
+        link_dir.mkdir(parents=True, exist_ok=True)
+        (link_dir / chunk.name).symlink_to(chunk)
+
+        mineru_out = work_dir / "mineru_output"
+        mineru_out.mkdir(parents=True, exist_ok=True)
 
         cmd = MINERU_CMD_PREFIX + [
             "-p", str(link_dir),
-            "-o", str(work_dir),
-            *(_validate_extra_args(extra_args or [])),
+            "-o", str(mineru_out),
+            *extra,
         ]
-
         log.detail(f"{' '.join(cmd)}")
-        result = subprocess.run(cmd, cwd="/home/windy/opt/MinerU")
 
+        result = subprocess.run(cmd, cwd="/home/windy/opt/MinerU")
         if result.returncode != 0:
-            log.error(f"MinerU failed (exit {result.returncode})")
+            log.error(f"MinerU failed for {chunk.name} (exit {result.returncode})")
             raise RuntimeError(f"MinerU exited with code {result.returncode}")
 
-        # Move output subdirectories into cache
-        for chunk_output in sorted(work_dir.iterdir()):
+        # Move output into cache immediately
+        for chunk_output in sorted(mineru_out.iterdir()):
             if chunk_output.is_dir():
                 dest = cache_dir / chunk_output.name
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.move(str(chunk_output), str(dest))
                 log.detail(f"Cached: {chunk_output.name}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Return all outputs: previously cached + newly processed
+        # Clean up work dir for next chunk
+        shutil.rmtree(link_dir, ignore_errors=True)
+        shutil.rmtree(mineru_out, ignore_errors=True)
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+
     all_outputs = sorted(d for d in cache_dir.iterdir() if d.is_dir())
     log.info(f"Total: {len(all_outputs)} chunk output(s)")
     return all_outputs

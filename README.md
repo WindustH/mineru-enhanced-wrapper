@@ -12,9 +12,6 @@ Process large PDFs with [MinerU](https://github.com/opendatalab/MinerU) by split
 ## Installation
 
 ```bash
-# Install dependencies
-pip install loguru
-
 # Install MinerU (follow official guide)
 # https://github.com/opendatalab/MinerU
 
@@ -78,6 +75,8 @@ output/
         ├── page_1.png
         └── ...
 ```
+
+Cached intermediate files (chunk PDFs, MinerU results) are stored under `~/.cache/mineru-enhanced/<input-path-hash>/`. Work directories are also placed there instead of `/tmp` to avoid excessive memory usage when `/tmp` is on tmpfs.
 
 ## Architecture
 

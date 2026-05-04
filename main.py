@@ -15,6 +15,7 @@ Examples:
 """
 
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
@@ -225,7 +226,10 @@ def main(argv: list[str] | None = None) -> None:
     pdfs = collect_pdfs(input_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cache_dir = output_dir / "_cache"
+    cache_dir = (
+        Path.home() / ".cache" / "mineru-enhanced"
+        / hashlib.sha256(str(input_path.resolve()).encode()).hexdigest()[:16]
+    )
     splits_dir = cache_dir / "splits"
     mineru_cache = cache_dir / "mineru_output"
 
